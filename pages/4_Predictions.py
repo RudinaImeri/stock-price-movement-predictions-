@@ -1,111 +1,89 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-
 from src.api_data import load_market_data_from_api
 from src.data_preprocessing import prepare_api_data
-from src.feature_engineering import encode_categorical
+from src.ui_theme import apply_global_theme, app_style
 
-st.set_page_config(page_title="Market Predictions", layout="wide")
+apply_global_theme()
 st.title("Market Predictions")
 
 STOCKS = {
-    "AAPL": {"name": "Apple"},
-    "MSFT": {"name": "Microsoft"},
-    "GOOGL": {"name": "Google"},
-    "AMZN": {"name": "Amazon"},
-    "TSLA": {"name": "Tesla"},
-    "META": {"name": "Meta"},
-    "NVDA": {"name": "Nvidia"},
+    "AAPL": "Apple",
+    "MSFT": "Microsoft",
+    "GOOGL": "Google",
+    "AMZN": "Amazon",
+    "TSLA": "Tesla",
+    "NVDA": "Nvidia",
+    "ONDS": "Ondas Holding Inc."
 }
 
-required = ["model", "encoders", "feature_names", "last_stock_trained"]
-missing = [k for k in required if k not in st.session_state]
+model = st.session_state.get("model")
+features = st.session_state.get("features")
+trained_stocks = st.session_state.get("trained_stocks")
 
-if missing:
-    st.warning("Please train the model first.")
+if model is None:
+    st.warning("Train model first")
     st.stop()
 
-model = st.session_state["model"]
-encoders = st.session_state["encoders"]
-feature_names = st.session_state["feature_names"]
-trained_symbol = st.session_state["last_stock_trained"]
+stock_map = {s: i for i, s in enumerate(trained_stocks)}
 
-st.info(f"Model trained on: **{trained_symbol}**")
-
-raw = load_market_data_from_api(trained_symbol)
-df = prepare_api_data(raw)
-
-X = df.drop(columns=["result", "date"], errors="ignore")
-X, _ = encode_categorical(X, encoders)
-X = X.reindex(columns=feature_names, fill_value=0)
-
-preds = model.predict(X)
-
-if hasattr(model, "predict_proba"):
-    probs = model.predict_proba(X)
-    confidence = np.max(probs, axis=1)
-else:
-    confidence = np.ones(len(preds))
-
+rows = []
 class_map = {0: "Sell", 1: "Hold", 2: "Buy"}
 
-price_close = df["price_close"]
-price_open = df["price_open"]
+for symbol, name in STOCKS.items():
 
-company_names = [v["name"] for v in STOCKS.values()]
+    df = prepare_api_data(load_market_data_from_api(symbol))
 
-table = pd.DataFrame({
-    "Symbol": df["exchange"],
-    "Name": df["exchange"].map(lambda s: STOCKS[s]["name"]),
-    "Price": price_close.round(2),
-    "Change": (price_close - price_open).round(2),
-    "Change %": ((price_close - price_open) / price_open * 100).round(2),
-    "Volume": df["volume"],
-    "Prediction": [class_map[int(p)] for p in preds],
-    "Confidence": confidence.round(3)
-})
+    df["stock"] = symbol
+    df["stock_id"] = stock_map[symbol]
 
-view = st.radio(
-    "View",
-    ["Most Active", "Top Gainers", "Top Losers"],
-    horizontal=True
-)
+    # numeric safety
+    numeric_cols = [
+        "price_open",
+        "price_close",
+        "price_high",
+        "price_low",
+        "volume",
+    ]
 
-if view == "Most Active":
-    table = table.sort_values("Volume", ascending=False)
-elif view == "Top Gainers":
-    table = table.sort_values("Change %", ascending=False)
-else:
-    table = table.sort_values("Change %", ascending=True)
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # EXACT same features
+    X = df[features]
 
-def color_change(val):
-    if isinstance(val, (int, float)):
-        return "color: green" if val > 0 else "color: red" if val < 0 else ""
-    return ""
+    # USE ONLY LAST DAY
+    X_last = X.iloc[[-1]]
+    last_row = df.iloc[-1]
 
+    pred = int(model.predict(X_last)[0])
 
-rows = st.slider("Rows to display", 20, 200, 50)
+    if hasattr(model, "predict_proba"):
+        confidence = model.predict_proba(X_last).max()
+    else:
+        confidence = 1.0
+
+    rows.append({
+        "Symbol": symbol,
+        "Name": name,
+        "Price": round(float(last_row["price_close"]), 2),
+        "Change": round(
+            float(last_row["price_close"] - last_row["price_open"]), 2
+        ),
+        "Change %": round(
+            float(
+                (last_row["price_close"] - last_row["price_open"])
+                / last_row["price_open"] * 100
+            ), 2
+        ),
+        "Volume": int(last_row["volume"]),
+        "Prediction": class_map[pred],
+        "Confidence": round(confidence, 3),
+    })
+
+table = pd.DataFrame(rows)
 
 st.dataframe(
-    table.head(rows)
-         .style
-         .applymap(color_change, subset=["Change", "Change %"])
-         .format({
-             "Price": "{:.2f}",
-             "Change %": "{:.2f}%",
-             "Volume": "{:,}",
-             "Confidence": "{:.3f}"
-         }),
-    use_container_width=True,
-    height=550
-)
-
-st.download_button(
-    "⬇ Download predictions.csv",
-    data=table.to_csv(index=False),
-    file_name="predictions.csv",
-    mime="text/csv",
-    key="download_yahoo_style"
+    app_style(table),
+    use_container_width=True
 )

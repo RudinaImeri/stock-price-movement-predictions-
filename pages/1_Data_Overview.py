@@ -1,26 +1,53 @@
 import streamlit as st
+import pandas as pd
 from src.api_data import load_market_data_from_api
 from src.data_preprocessing import prepare_api_data
+from src.ui_theme import apply_global_theme
 
-st.title("Data Overview")
+apply_global_theme()
 
-STOCKS = {
-    "Apple (AAPL)": "AAPL",
-    "Microsoft (MSFT)": "MSFT",
-    "Google (GOOGL)": "GOOGL",
-    "Amazon (AMZN)": "AMZN",
-    "Tesla (TSLA)": "TSLA",
-    "Meta (META)": "META",
-    "Nvidia (NVDA)": "NVDA"
-}
+st.title("Training Data Overview")
 
-label = st.selectbox("Choose a stock", STOCKS.keys())
-symbol = STOCKS[label]
+STOCK = ["AAPL",
+         "MSFT",
+         "GOOGL",
+         "AMZN",
+         "TSLA",
+         "NVDA",
+         "ONDS",
+         ]
 
-raw = load_market_data_from_api(symbol)
-data = prepare_api_data(raw)
+all_data = []
 
-st.subheader(f"Preview — {label}")
-st.dataframe(data.head(100), use_container_width=True)
+for stock in STOCK:
+    raw = load_market_data_from_api(stock)
+    df = prepare_api_data(raw)
+    df["stock"] = stock
+    all_data.append(df)
 
-st.write("Shape:", data.shape)
+data = pd.concat(all_data, ignore_index=True)
+
+st.subheader("Preview: 5 rows per stock")
+
+preview = (
+    data
+    .groupby("stock", group_keys=False)
+    .apply(lambda x: x.head(5))
+)
+
+# Put stock as first column
+cols = ["stock"] + [c for c in preview.columns if c != "stock"]
+preview = preview[cols]
+
+st.dataframe(preview, use_container_width=True)
+
+st.subheader("Rows per stock (training data balance)")
+st.dataframe(
+    data["stock"]
+    .value_counts()
+    .reset_index()
+    .rename(columns={"index": "stock", "stock": "Rows"})
+)
+
+st.write("Total rows:", len(data))
+st.write("Number of stocks:", data["stock"].nunique())

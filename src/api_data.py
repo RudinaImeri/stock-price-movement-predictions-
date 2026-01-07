@@ -1,25 +1,37 @@
 import yfinance as yf
+import pandas as pd
 
 
-def load_market_data_from_api(symbol: str, start="2020-01-01"):
-    ticker = yf.Ticker(symbol)
-    df = ticker.history(start=start)
+def load_market_data_from_api(symbol, period="2y"):
+    df = yf.download(symbol, period=period, progress=False)
 
-    if df.empty:
-        raise ValueError(f"No data returned for {symbol}")
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        raise ValueError(f"No valid data returned for {symbol}")
+
+    # Handle MultiIndex columns
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
     df = df.reset_index()
+
+    required = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    if not all(c in df.columns for c in required):
+        raise ValueError(f"Missing columns for {symbol}")
 
     df = df.rename(columns={
         "Date": "date",
         "Open": "price_open",
-        "Close": "price_close",
         "High": "price_high",
         "Low": "price_low",
-        "Volume": "volume"
+        "Close": "price_close",
+        "Volume": "volume",
     })
 
-    df["exchange"] = symbol
-    df["company_name"] = symbol
-
-    return df
+    return df[[
+        "date",
+        "price_open",
+        "price_high",
+        "price_low",
+        "price_close",
+        "volume"
+    ]]
